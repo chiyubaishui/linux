@@ -1,0 +1,81 @@
+当 iowait 升高时，进程很可能因为得不到硬件的响应，而长时间处于不可中断状态。从 ps 或者 top 命令的输出中，你可以发现它们都处于 D 状态，也就是不可中断状态（Uninterruptible Sleep）。
+进程状态:
+R 是 Running 或 Runnable 的缩写，表示进程在 CPU 的就绪队列中，正在运行或者正在等待运行。
+D 是 Disk Sleep 的缩写，也就是不可中断状态睡眠（Uninterruptible Sleep），一般表示进程正在跟硬件交互，并且交互过程不允许被其他进程或中断打断。
+Z 是 Zombie 的缩写，
+它表示僵尸进程，也就是进程实际上已经结束了，但是父进程还没有回收它的资源（比如进程的描述符、PID 等）。
+S 是 Interruptible Sleep 的缩写，也就是可中断状态睡眠，表示进程因为等待某个事件而被系统挂起。当进程等待的事件发生时，它会被唤醒并进入 R 状态。
+I 是 Idle 的缩写，也就是空闲状态，用在不可中断睡眠的内核线程上。前面说了，硬件交互导致的不可中断进程用 D 表示，但对某些内核线程来说，它们有可能实际上并没有任何负载，用 Idle 正是为了区分这种情况。要注意，D 状态的进程会导致平均负载升高， I 状态的进程却不会。
+
+
+# 按下数字 1 切换到所有 CPU 的使用情况，观察一会儿按 Ctrl+C 结束
+$ top
+top - 05:56:23 up 17 days, 16:45,  2 users,  load average: 2.00, 1.68, 1.39
+Tasks: 247 total,   1 running,  79 sleeping,   0 stopped, 115 zombie
+%Cpu0  :  0.0 us,  0.7 sy,  0.0 ni, 38.9 id, 60.5 wa,  0.0 hi,  0.0 si,  0.0 st
+%Cpu1  :  0.0 us,  0.7 sy,  0.0 ni,  4.7 id, 94.6 wa,  0.0 hi,  0.0 si,  0.0 st
+...
+
+  PID USER      PR  NI    VIRT    RES    SHR S  %CPU %MEM     TIME+ COMMAND
+ 4340 root      20   0   44676   4048   3432 R   0.3  0.0   0:00.05 top
+ 4345 root      20   0   37280  33624    860 D   0.3  0.0   0:00.01 app
+ 4344 root      20   0   37280  33624    860 D   0.3  0.4   0:00.01 app
+    1 root      20   0  160072   9416   6752 S   0.0  0.1   0:38.59 systemd
+...
+先看第一行的平均负载（ Load Average），过去 1 分钟、5 分钟和 15 分钟内的平均负载在依次减小，说明平均负载正在升高；而 1 分钟内的平均负载已经达到系统的 CPU 个数，说明系统很可能已经有了性能瓶颈。
+再看第二行的 Tasks，有 1 个正在运行的进程，但僵尸进程比较多，而且还在不停增加，说明有子进程在退出时没被清理。
+接下来看两个 CPU 的使用率情况，用户 CPU 和系统 CPU 都不高，但 iowait 分别是 60.5% 和 94.6%，好像有点儿不正常。
+最后再看每个进程的情况， CPU 使用率最高的进程只有 0.3%，看起来并不高；但有两个进程处于 D 状态，它们可能在等待 I/O，但光凭这里并不能确定是它们导致了 iowait 升高。
+
+第一点，iowait 太高了，导致系统的平均负载升高，甚至达到了系统 CPU 的个数。
+第二点，僵尸进程在不断增多，说明有程序没能正确清理子进程的资源。
+我们在终端中运行 dstat 命令，观察 CPU 和 I/O 的使用情况：
+
+# 间隔1秒输出10组数据
+$ dstat 1 10
+You did not select any stats, using -cdngy by default.
+--total-cpu-usage-- -dsk/total- -net/total- ---paging-- ---system--
+usr sys idl wai stl| read  writ| recv  send|  in   out | int   csw
+  0   0  96   4   0|1219k  408k|   0     0 |   0     0 |  42   885
+  0   0   2  98   0|  34M    0 | 198B  790B|   0     0 |  42   138
+  0   0   0 100   0|  34M    0 |  66B  342B|   0     0 |  42   135
+  0   0  84  16   0|5633k    0 |  66B  342B|   0     0 |  52   177
+  0   3  39  58   0|  22M    0 |  66B  342B|   0     0 |  43   144
+  0   0   0 100   0|  34M    0 | 200B  450B|   0     0 |  46   147
+  0   0   2  98   0|  34M    0 |  66B  342B|   0     0 |  45   134
+  0   0   0 100   0|  34M    0 |  66B  342B|   0     0 |  39   131
+  0   0  83  17   0|5633k    0 |  66B  342B|   0     0 |  46   168
+  0   3  39  59   0|  22M    0 |  66B  342B|   0     0 |  37   134
+  从 dstat 的输出，我们可以看到，每当 iowait 升高（wai）时，磁盘的读请求（read）都会很大。这说明 iowait 的升高跟磁盘的读请求有关，很可能就是磁盘读导致的。
+ 
+# 间隔 1 秒输出多组数据 (这里是 20 组)
+$ pidstat -d 1 20
+...
+06:48:46      UID       PID   kB_rd/s   kB_wr/s kB_ccwr/s iodelay  Command
+06:48:47        0      4615      0.00      0.00      0.00       1  kworker/u4:1
+06:48:47        0      6080  32768.00      0.00      0.00     170  app
+06:48:47        0      6081  32768.00      0.00      0.00     184  app
+
+06:48:47      UID       PID   kB_rd/s   kB_wr/s kB_ccwr/s iodelay  Command
+06:48:48        0      6080      0.00      0.00      0.00     110  app
+
+06:48:48      UID       PID   kB_rd/s   kB_wr/s kB_ccwr/s iodelay  Command
+06:48:49        0      6081      0.00      0.00      0.00     191  app
+
+06:48:49      UID       PID   kB_rd/s   kB_wr/s kB_ccwr/s iodelay  Command
+
+06:48:50      UID       PID   kB_rd/s   kB_wr/s kB_ccwr/s iodelay  Command
+06:48:51        0      6082  32768.00      0.00      0.00       0  app
+06:48:51        0      6083  32768.00      0.00      0.00       0  app
+
+06:48:51      UID       PID   kB_rd/s   kB_wr/s kB_ccwr/s iodelay  Command
+06:48:52        0      6082  32768.00      0.00      0.00     184  app
+06:48:52        0      6083  32768.00      0.00      0.00     175  app
+
+06:48:52      UID       PID   kB_rd/s   kB_wr/s kB_ccwr/s iodelay  Command
+06:48:53        0      6083      0.00      0.00      0.00     105  app
+...
+
+
+$ perf record -g
+$ perf report

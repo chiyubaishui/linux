@@ -1,0 +1,8 @@
+方法1：临时有效
+hostname 主机名	//只能临时修改的主机名，当重启机器后，主机名称又变回来了。
+
+hostname xh01
+
+方法2：永久生效
+//永久性的修改主机名称，重启后能保持修改后的。
+hostnamectl set-hostname xxx	

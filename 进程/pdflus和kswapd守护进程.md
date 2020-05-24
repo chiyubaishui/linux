@@ -1,0 +1,3 @@
+pdflus和kswapd守护进程
+
+pdflush和kswapd进程 在使用top和ps的时候，可以经常看到这两个线程。pdflush进程的作用是同步内存数据到磁盘，保证内存的数据和磁盘的数据一致，把内存中脏页（dirty page）写入到磁盘上。kswap的作用是管理内存，保证系统内存能够满足任何用户需求。系统每过一定时间就会唤醒kswapd，看看内存是否紧张，如果不紧张，则睡眠，在kswapd中，有2个阀值,pages_hige和pages_low,当空闲内存页的数量低于pages_low的时候,kswapd进程就会扫描内存并且每次释放出32个free pages,直到free page的数量到达pages_high.
